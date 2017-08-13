@@ -19,10 +19,10 @@ import Base: ==
 
 @testset "Clustering" begin
     n_transactions = length(_transactions())
-    transactions = Transactions(collect(1:n_transactions), _transactions(), zeros(Int, n_transactions))
+    transactions = Transactions(collect(1:n_transactions), _transactions())
     @test length(transactions) == 15
 
-    @test transactions[6] == [:b,:i] 
+    @test transactions[6] == [:b,:i]
 
     min_support = 0.6
     max_ceiling = 0.3

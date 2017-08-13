@@ -3,61 +3,46 @@
 
 
 # lets start with generating some basic example Data
-
+"""A container for Transactions which is a Vecto of a list of Symbols (the items)"""
 type Transactions
     ids::Vector{Int}
     items::Vector{Vector{Symbol}}
-    labels::Vector{Int}
-    item_set::Set{Symbol}
 end
-
-
-function Transactions(ids::Vector{Int}, items::Vector{Vector{Symbol}}, labels::Vector{Int})
-    _item_set = Set{Symbol}()
-    for item_list in items
-        union!(_item_set, item_list)
-    end
-    Transactions(ids, items, labels, _item_set)
-end
-
 
 Base.getindex(transactions::Transactions, index::Int) = transactions.items[index]
 Base.length(transactions::Transactions) = length(transactions.ids)
 
+"""A wrapper around a Vector of integers that are the indeces of the transactions IDs"""
 type Cluster
     inds::Vector{Int}
 end
 
 Base.length(cluster::Cluster) = length(cluster.inds)
-Base.endof(cluster::Cluster) = cluster[length(cluster)]
 Base.getindex(cluster::Cluster, index::Int) = cluster.inds[index]
+Base.endof(cluster::Cluster) = cluster[length(cluster)]
+Base.push!(cluster::Cluster, idx::Int) = push!(cluster.inds, idx)
+Base.pop!(cluster::Cluster) = pop!(cluster.inds)
+Base.deleteat!(cluster::Cluster, index::Int) = deleteat!(cluster.inds, index)
+Base.isempty(cluster::Cluster) = isempty(cluster.inds)
 
 
 # FIXME: rewrite method in a clearer way
 """ Collect the set of items in the cluster of transaction """
 items(cluster::Cluster, transactions::Transactions) = Set([i for t in transactions.items[cluster.inds] for i in t])
-Base.push!(cluster::Cluster, idx::Int) = push!(cluster.inds, idx)
-Base.pop!(cluster::Cluster) = pop!(cluster.inds)
-Base.size(cluster::Cluster) = length(cluster.inds)
-Base.deleteat!(cluster::Cluster, index::Int) = deleteat!(cluster.inds, index)
-Base.isempty(cluster::Cluster) = isempty(cluster.inds)
+
+""" A Helper method for showing the transactions in a cluster """
 function Base.show(cluster::Cluster, transactions::Transactions)
     for i in cluster.inds
         println(transactions[i])
     end
 end
 
-# function move!(idx::Int, from_cluster::Cluster, to_cluster::Cluster)
-#     deleteat!(from_cluster.inds, findin(from_cluster.inds, idx))
-#     push!(to_cluster.inds, idx)
-# end
-
 
 function counts(cluster::Cluster, transactions::Transactions)
     _counts = Dict{Symbol, Float64}()
     for item in items(cluster, transactions)
-        for i in cluster.inds
-            if (item in transactions.items[i])
+        for idx in cluster.inds
+            if (item in transactions.items[idx])
                 if haskey(_counts, item)
                     _counts[item] += 1.0
                 else
@@ -69,8 +54,13 @@ function counts(cluster::Cluster, transactions::Transactions)
     _counts
 end
 
+"""
+    support(cluster::Cluster, transactions::Transactions) -> Dict{Symbol, Float64}
+
+Computes the support of each item in the cluster
+"""
 function support(cluster::Cluster, transactions::Transactions)
-    N = float(size(cluster))
+    N = float(length(cluster))
     _support = counts(cluster, transactions)
     for (item, f) in _support
         _support[item] = f/N
@@ -79,18 +69,23 @@ function support(cluster::Cluster, transactions::Transactions)
 end
 
 
+""" Computes the set of small items """
 function small_items(cluster::Cluster, max_ceiling::AbstractFloat, transactions::Transactions)
     _support = support(cluster, transactions)
     Set([item for (item, sup) in _support if sup <= max_ceiling])
 end
 
-
+""" Computes the set of large items """
 function large_items(cluster::Cluster, min_support::AbstractFloat, transactions::Transactions)
     _support = support(cluster, transactions)
     Set([item for (item, sup) in _support if sup >= min_support])
 end
 
+"""
+    slr(idx::Int, cluster::Cluster, max_ceiling::Float64, min_support::Float64, transactions::Transactions) -> Float64
 
+Computes the small to large ratio (SLR) for a transaction (transactions[idx]) and a cluster
+"""
 function slr{I <: Integer, T <: AbstractFloat}(idx::I, cluster::Cluster, max_ceiling::T, min_support::T, transactions::Transactions)
     S = length(intersect(transactions[idx], small_items(cluster, max_ceiling, transactions)))
     L = length(intersect(transactions[idx], large_items(cluster, min_support, transactions)))
@@ -167,12 +162,20 @@ function allocate!{C<:Cluster, F<:AbstractFloat}(clusters::Vector{C}, transactio
     end
 end
 
-function best_cluster(slrs)
-    min_inds = find(slrs .== minimum(slrs))
+"""
+    best_cluster_index(min_slr_inds, transaction, clusters, max_ceiling, min_support, transactions) -> Int
 
-    for i in min_inds
-        total_cost(clusters, max_ceiling, min_support, transactions)
+Finds the best cluster for the trabsaction in question, by choosing the minimum cost from the clusters with the smallest SLR
+"""
+function best_cluster_index(min_slr_inds, transaction, clusters, max_ceiling, min_support, transactions)
+    _costs = zeros(length(min_slr_inds))
+    for (i, best_cluster_idx) in enumerate(min_slr_inds)
+        push!(clusters[best_cluster_idx], transaction)
+        _costs[i] = total_cost(clusters, max_ceiling, min_support, transactions)
+        pop!(clusters[best_cluster_idx])
     end
+    min_cost, min_cost_inds = findmin(_costs)
+    return min_slr_inds[min_cost_inds]
 end
 
 
@@ -186,31 +189,17 @@ function refine!(clusters, max_ceiling, min_support, transactions, slr_threshold
     while !isempty(excess_pool)
         transaction = pop!(excess_pool)
         slrs = [slr(transaction, cluster, max_ceiling, min_support, transactions) for cluster in clusters]
-        @show transaction, slrs
-
-
-        min_inds = find(slrs .== minimum(slrs))
-        @show min_inds
+        min_slr_inds = find(slrs .== minimum(slrs))
         min_slr = slrs[1]
-        @show min_slr
         if min_slr > slr_threshold
             push!(excess_pool,transaction)
         else
-            _costs = zeros(length(min_inds))
-            for (i, best_cluster_idx) in enumerate(min_inds)
-                push!(clusters[best_cluster_idx], transaction)
-                _costs[i] = total_cost(clusters, max_ceiling, min_support, transactions)
-                pop!(clusters[best_cluster_idx])
-            end
-            @show _costs
-            min_cost, min_cost_inds = findmin(_costs)
-            println("add transaction $transaction to cluster $(min_inds[min_cost_inds])")
-            push!(clusters[min_inds[min_cost_inds]], transaction)
+            best_idx = best_cluster_index(min_slr_inds, transaction, clusters, max_ceiling, min_support, transactions)
+            push!(clusters[best_idx], transaction)
         end
-
     end
-    println("cost after refinement $(total_cost(clusters, max_ceiling, min_support, transactions))")
 end
+
 
 function get_excess_pool(clusters, max_ceiling, min_support, transactions, slr_threshold)
     excess_pool = Cluster([])
@@ -227,50 +216,3 @@ function get_excess_pool(clusters, max_ceiling, min_support, transactions, slr_t
     clusters = [cluster for cluster in clusters if !isempty(cluster)]
     excess_pool, clusters
 end
-#
-#
-# function cluster_transactions{F<:AbstractFloat}(transactions::Transactions, max_ceiling::F, min_support::F, α)
-#     # start with one cluster
-#     clusters = Cluster[transactions.inds]
-#     refine!{C<:Cluster}(clusters::Vector{C})
-# end
-
-
-################## tests
-# these are all of the transactions
-# _transactions = Vector{Symbol}[[:b,:d], [:a,:b,:d], [:b,:c,:d], [:d,:f,:h], [:b,:g,:i],
-#                 [:b,:i], [:a,:b,:i], [:b,:e,:i], [:b,:c,:e,:i], [:c,:i],
-#                 [:d,:h], [:d,:h,:f], [:b,:c,:d,:f], [:h], [:d,:g,:h]]
-#
-# n_transactions = length(_transactions)
-# transactions = Transactions(collect(1:n_transactions), _transactions, zeros(Int, n_transactions))
-# @assert length(transactions) == 15
-#
-# # transactions.labels[1:5] = 1
-# # transactions.labels[6:10] = 2
-# # transactions.labels[11:15] = 3
-#
-# clusters = _clusters()
-# refine!(clusters, max_ceiling, min_support, transactions, slr_threshold)
-
-#
-# c1 = Cluster([1,2,3,4,5])
-# c2 = Cluster([6,7,8,9,10])
-# c3 = Cluster([11,12,13,14,15])
-#
-# _counts_1 = counts(c1, transactions)
-# _counts_2 = counts(c2, transactions)
-# _counts_3 = counts(c3, transactions)
-#
-#
-# supp_1 = support(c1, transactions)
-# supp_2 = support(c2, transactions)
-# supp_3 = support(c3, transactions)
-#
-# clusters = [c1, c2, c3]
-# min_support = 0.6
-# max_ceiling = 0.3
-#
-# @show intra_cluster_cost(clusters, max_ceiling, transactions)
-# @show inter_cluster_cost(clusters, min_support, transactions)
-# @show total_cost(clusters, max_ceiling, min_support, transactions)

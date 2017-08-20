@@ -28,7 +28,7 @@ Base.isempty(cluster::Cluster) = isempty(cluster.inds)
 
 # FIXME: rewrite method in a clearer way
 """ Collect the set of items in the cluster of transaction """
-items(cluster::Cluster, transactions::Transactions) = Set([i for t in transactions.items[cluster.inds] for i in t])
+items(cluster::Cluster, transactions::Transactions) = Set([item for transaction in transactions.items[cluster.inds] for item in transaction])
 
 """ A Helper method for showing the transactions in a cluster """
 function Base.show(cluster::Cluster, transactions::Transactions)
@@ -135,7 +135,7 @@ function allocate!{C<:Cluster, F<:AbstractFloat}(clusters::Vector{C}, transactio
     for i in transactions.ids
         println("transaction $i with items $(transactions[i])")
         new_cluster = Cluster([i])
-        # start by creating a new cluster the the transaction
+        # start by creating a new cluster the transaction
         if length(clusters) < 1
             push!(clusters, new_cluster)
             continue
